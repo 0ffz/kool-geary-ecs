@@ -1,11 +1,11 @@
 import co.touchlab.kermit.Severity
 import com.mineinabyss.geary.helpers.entity
 import com.mineinabyss.geary.modules.ArchetypeEngineModule
-import com.mineinabyss.geary.modules.Geary
+import com.mineinabyss.geary.modules.GearySetup
 import com.mineinabyss.geary.modules.geary
-import com.mineinabyss.geary.systems.query.Query
 import com.mineinabyss.geary.systems.query.query
 import de.fabmax.kool.KoolApplication
+import de.fabmax.kool.KoolContext
 import de.fabmax.kool.addScene
 import de.fabmax.kool.math.MutableMat4f
 import de.fabmax.kool.math.Vec3f
@@ -16,16 +16,27 @@ import de.fabmax.kool.scene.Mesh
 import de.fabmax.kool.scene.MeshInstanceList
 import de.fabmax.kool.scene.defaultOrbitCamera
 import de.fabmax.kool.util.Color
+import de.fabmax.kool.util.RenderLoop
 import de.fabmax.kool.util.Time
+import kotlinx.coroutines.Dispatchers
 import kotlin.random.Random
-import kotlin.time.Duration.Companion.milliseconds
 
-data class Position(val x: Float, val y: Float, val z: Float)
+data class Position(var x: Float, var y: Float, var z: Float)
 data class Velocity(val x: Float, val y: Float, val z: Float)
 
+fun GearySetup.tickOnUpdate(ctx: KoolContext) {
+    ctx.onRender += { geary.tick() }
+}
+
 fun main() = KoolApplication {
-    Geary.mutableConfig.minSeverity = Severity.Info
-    val world = geary(ArchetypeEngineModule()).start()
+    val world = geary(
+        ArchetypeEngineModule(
+            engineThread = { Dispatchers.RenderLoop })
+    ) {
+        loggerSeverity(Severity.Info)
+        tickOnUpdate(ctx)
+    }.start()
+
     addScene {
         defaultOrbitCamera()
         lighting.singleDirectionalLight {
@@ -38,7 +49,7 @@ fun main() = KoolApplication {
             Attribute.COLORS,
             instances = MeshInstanceList(listOf(Attribute.INSTANCE_MODEL_MAT), initialSize = 10)
         ).apply {
-            this.generate {
+            generate {
                 cube {
                     colored()
                 }
@@ -54,17 +65,16 @@ fun main() = KoolApplication {
             }
         }
         with(world) {
-            repeat(10) {
+            repeat(100000) {
                 entity {
-                    fun randomCoord() = (0..10).random().toFloat()
+                    fun randomCoord() = (-10..10).random().toFloat()
                     fun randomVelocity() = Random.nextFloat()
                     set(Position(randomCoord(), randomCoord(), randomCoord()))
                     set(Velocity(randomVelocity(), randomVelocity(), randomVelocity()))
                 }
             }
 
-            //TODO DEFAULT TICK RATE
-            system(query<Position>()).every(20.milliseconds).execOnAll {
+            system(query<Position>()).execOnAll {
                 mesh.instances?.clear()
                 mesh.instances?.addInstances(count()) { buffer ->
                     forEach { (position) ->
@@ -73,17 +83,12 @@ fun main() = KoolApplication {
                 }
             }
 
-
-            class PositionQuery : Query(world) {
-                var position by get<Position>()
-                val velocity by get<Velocity>()
-            }
-
             // system to update positions based on velocities
-            system(PositionQuery()).every(20.milliseconds).exec {
-                val vel = it.velocity
-                val pos = it.position
-                it.position = Position(pos.x + vel.x, pos.y + vel.y, pos.z + vel.z)
+            system(query<Position, Velocity>()).exec { (pos, vel) ->
+                val dT = Time.deltaT
+                pos.x += vel.x * dT
+                pos.y += vel.y * dT
+                pos.z += vel.z * dT
             }
         }
 
